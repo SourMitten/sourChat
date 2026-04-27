@@ -39,7 +39,7 @@ def notify(title, message):
     except:
         pass
 
-# ---------- Host Logic ----------
+# ---------- Host ----------
 
 def broadcast(message, sender=None):
     with lock:
@@ -83,23 +83,6 @@ def handle_client(client):
 
         sock.close()
 
-def host_input_loop(username):
-    while True:
-        try:
-            msg = input()
-        except EOFError:
-            break
-
-        if msg.strip() == "/quit":
-            print("Shutting down host...")
-            break
-
-        full_msg = f"[{timestamp()}] {username}: {msg}"
-        logging.info(full_msg)
-        print(full_msg)
-
-        broadcast({"type": "msg", "msg": full_msg})
-
 def run_host(port, password, username):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(("0.0.0.0", port))
@@ -107,14 +90,11 @@ def run_host(port, password, username):
 
     print(f"[{timestamp()}] Host '{username}' listening on port {port}")
 
-    threading.Thread(target=host_input_loop, args=(username,), daemon=True).start()
-
     while True:
         sock, addr = server.accept()
 
         try:
             auth = recv_json(sock)
-
             if not auth or auth.get("type") != "auth":
                 sock.close()
                 continue
@@ -122,13 +102,11 @@ def run_host(port, password, username):
             client_username = auth.get("username", "").strip()
             client_pass = auth.get("password")
 
-            # ---- Username validation only ----
             if not client_username:
                 send_json(sock, {"type": "sys", "msg": "Invalid username"})
                 sock.close()
                 continue
 
-            # ---- Password check ----
             if password and client_pass != password:
                 send_json(sock, {"type": "sys", "msg": "Auth failed"})
                 sock.close()
@@ -144,20 +122,24 @@ def run_host(port, password, username):
         except:
             sock.close()
 
-# ---------- Client Logic ----------
+# ---------- Client ----------
 
 def receive_loop(sock):
-    while True:
-        data = recv_json(sock)
-        if not data:
-            print("Disconnected from server.")
-            break
+    try:
+        while True:
+            data = recv_json(sock)
+            if not data:
+                print("Disconnected from server.")
+                break
 
-        msg = data.get("msg", "")
-        print(msg)
+            msg = data.get("msg", "")
+            print(msg)
 
-        if data["type"] == "msg":
-            notify("New Message", msg)
+            if data["type"] == "msg":
+                notify("New Message", msg)
+
+    except:
+        print("Connection lost.")
 
 def run_client(target, port, username, password):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -168,23 +150,12 @@ def run_client(target, port, username, password):
         print(f"Connection failed: {e}")
         return
 
+    # ---- AUTH (NO TIMEOUT, NO settimeout) ----
     send_json(sock, {
         "type": "auth",
         "username": username,
         "password": password
     })
-
-    sock.settimeout(2)
-    try:
-        response = recv_json(sock)
-        if response and response.get("type") == "sys":
-            print(response.get("msg"))
-            sock.close()
-            return
-    except:
-        pass
-    finally:
-        sock.settimeout(None)
 
     threading.Thread(target=receive_loop, args=(sock,), daemon=True).start()
 
@@ -214,22 +185,25 @@ def main():
 
     parser.add_argument("--dev", required=True, choices=["host", "client"])
     parser.add_argument("--target", help="Host IP (client mode)")
-    parser.add_argument("--port", type=int, default=5000)
-    parser.add_argument("--username", help="Username (required)")
+    parser.add_argument("--port", type=int, help="Port (REQUIRED)")
+    parser.add_argument("--username", help="Username (REQUIRED)")
     parser.add_argument("--password", default=None)
-    parser.add_argument("--log", default="chat.log")
 
     args = parser.parse_args()
 
+    if not args.port:
+        print("ERROR: --port is required")
+        return
+
+    if not args.username:
+        print("ERROR: --username is required")
+        return
+
     logging.basicConfig(
-        filename=args.log,
+        filename="chat.log",
         level=logging.INFO,
         format="%(asctime)s %(message)s"
     )
-
-    if not args.username:
-        print("You must provide --username")
-        return
 
     if args.dev == "host":
         run_host(args.port, args.password, args.username.strip())
