@@ -7,14 +7,27 @@ import json
 import logging
 import subprocess
 from datetime import datetime
+import os
+import sys
 
 clients = []
 lock = threading.Lock()
 
+# ---------- Client Input State ----------
+current_input = ""
+input_lock = threading.Lock()
+running = True
+
 # ---------- Utilities ----------
 
+def clear():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
 def timestamp():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime("%H:%M:%S")
+
+def format_sys(msg):
+    return f"[{timestamp()}] *** {msg} ***"
 
 def send_json(sock, data):
     try:
@@ -51,7 +64,7 @@ def handle_client(client):
     sock = client["sock"]
     username = client["username"]
 
-    join_msg = f"[{timestamp()}] {username} joined."
+    join_msg = format_sys(f"{username} joined")
     logging.info(join_msg)
     print(join_msg)
 
@@ -69,6 +82,9 @@ def handle_client(client):
                 print(msg)
                 broadcast({"type": "msg", "msg": msg}, sender=client)
 
+            elif data["type"] == "exit":
+                break
+
     except:
         pass
     finally:
@@ -76,7 +92,7 @@ def handle_client(client):
             if client in clients:
                 clients.remove(client)
 
-        leave_msg = f"[{timestamp()}] {username} left."
+        leave_msg = format_sys(f"{username} left")
         logging.info(leave_msg)
         print(leave_msg)
         broadcast({"type": "sys", "msg": leave_msg})
@@ -125,23 +141,35 @@ def run_host(port, password, username):
 # ---------- Client ----------
 
 def receive_loop(sock):
+    global current_input, running
+
     try:
-        while True:
+        while running:
             data = recv_json(sock)
             if not data:
-                print("Disconnected from server.")
                 break
 
             msg = data.get("msg", "")
-            print(msg)
+
+            with input_lock:
+                sys.stdout.write("\r" + " " * 100 + "\r")
+                print(msg)
+                sys.stdout.write("> " + current_input)
+                sys.stdout.flush()
 
             if data["type"] == "msg":
                 notify("New Message", msg)
 
     except:
-        print("Connection lost.")
+        pass
+    finally:
+        running = False
+        with input_lock:
+            print("\nDisconnected from server.")
 
 def run_client(target, port, username, password):
+    global current_input, running
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     try:
@@ -150,7 +178,6 @@ def run_client(target, port, username, password):
         print(f"Connection failed: {e}")
         return
 
-    # ---- AUTH (NO TIMEOUT, NO settimeout) ----
     send_json(sock, {
         "type": "auth",
         "username": username,
@@ -161,19 +188,52 @@ def run_client(target, port, username, password):
 
     print(f"Connected as {username}. Type /quit to exit.")
 
-    while True:
+    sys.stdout.write("> ")
+    sys.stdout.flush()
+
+    while running:
         try:
-            msg = input()
-        except EOFError:
+            char = sys.stdin.read(1)
+        except KeyboardInterrupt:
             break
 
-        if msg.strip() == "/quit":
-            break
+        with input_lock:
+            if char == "\n":
+                msg = current_input.strip()
+                print()
 
-        send_json(sock, {
-            "type": "msg",
-            "msg": msg
-        })
+                if msg == "/quit":
+                    running = False
+
+                    # tell server we're leaving
+                    send_json(sock, {"type": "exit"})
+
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except:
+                        pass
+
+                    break
+
+                send_json(sock, {
+                    "type": "msg",
+                    "msg": msg
+                })
+
+                current_input = ""
+                sys.stdout.write("> ")
+                sys.stdout.flush()
+
+            elif char in ("\x7f", "\x08"):  # backspace (handles more terminals)
+                current_input = current_input[:-1]
+                sys.stdout.write("\r> " + current_input + " ")
+                sys.stdout.write("\r> " + current_input)
+                sys.stdout.flush()
+
+            else:
+                current_input += char
+                sys.stdout.write(char)
+                sys.stdout.flush()
 
     sock.close()
     print("Disconnected.")
@@ -190,6 +250,8 @@ def main():
     parser.add_argument("--password", default=None)
 
     args = parser.parse_args()
+
+    clear()
 
     if not args.port:
         print("ERROR: --port is required")
