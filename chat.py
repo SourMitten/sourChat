@@ -9,6 +9,7 @@ import subprocess
 from datetime import datetime
 import os
 import sys
+from win11toast import toast
 
 clients = []
 lock = threading.Lock()
@@ -47,10 +48,15 @@ def recv_json(sock):
             return json.loads(line)
 
 def notify(title, message):
+    # Linux Notifications
     try:
         subprocess.Popen(["notify-send", title, message])
     except:
         pass
+    # Winwows Notifications
+    toast(title, message)
+
+
 
 # ---------- Host ----------
 
