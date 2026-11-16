@@ -814,12 +814,6 @@ Connected as Charlie. Type /quit to exit.
 
 # License
 
-Add your project's license here.
-
-For example:
-
 ```text
 MIT License
 ```
-
-If this project is not open source, replace this section with the appropriate licensing information.
