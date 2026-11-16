@@ -53,9 +53,69 @@ def notify(title, message):
         subprocess.Popen(["notify-send", title, message])
     except:
         pass
-    # Winwows Notifications
-    toast(title, message)
+    # Windows Notifications
+    try:
+        toast(title, message)
+    except:
+        pass
 
+
+# ---------- Discovery ----------
+
+def discovery_responder(port, username):
+    """Background thread for hosts to respond to network discovery requests."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("0.0.0.0", port))
+        while True:
+            data, addr = sock.recvfrom(1024)
+            try:
+                req = json.loads(data.decode())
+                if req.get("type") == "discover":
+                    resp = json.dumps({
+                        "type": "discover_response",
+                        "username": username,
+                        "port": port
+                    })
+                    sock.sendto(resp.encode(), addr)
+            except:
+                pass
+    except:
+        pass
+
+def run_discover(port):
+    """Scans the local network for active sourChat hosts."""
+    print(f"Searching for sourChat sessions on port {port}...")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.settimeout(1.0)
+    
+    try:
+        msg = json.dumps({"type": "discover"})
+        # Send to general local broadcast address
+        sock.sendto(msg.encode(), ('255.255.255.255', port))
+        
+        print("Listening for responses (3 seconds)...")
+        found = False
+        start_time = datetime.now()
+        while (datetime.now() - start_time).total_seconds() < 3.0:
+            try:
+                data, addr = sock.recvfrom(1024)
+                response = json.loads(data.decode())
+                if response.get("type") == "discover_response":
+                    found = True
+                    username = response.get("username", "Unknown")
+                    host_port = response.get("port", port)
+                    print(f" -> Found: {username} @ {addr[0]}:{host_port}")
+            except socket.timeout:
+                continue
+            except Exception:
+                continue
+                
+        if not found:
+            print("No sourChat sessions found.")
+    finally:
+        sock.close()
 
 
 # ---------- Host ----------
@@ -106,6 +166,9 @@ def handle_client(client):
         sock.close()
 
 def run_host(port, password, username):
+    # Start discovery responder in background
+    threading.Thread(target=discovery_responder, args=(port, username), daemon=True).start()
+
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(("0.0.0.0", port))
     server.listen(10)
@@ -249,10 +312,10 @@ def run_client(target, port, username, password):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--dev", required=True, choices=["host", "client"])
+    parser.add_argument("--dev", required=True, choices=["host", "client", "discover"])
     parser.add_argument("--target", help="Host IP (client mode)")
     parser.add_argument("--port", type=int, help="Port (REQUIRED)")
-    parser.add_argument("--username", help="Username (REQUIRED)")
+    parser.add_argument("--username", help="Username (REQUIRED for host/client)")
     parser.add_argument("--password", default=None)
 
     args = parser.parse_args()
@@ -263,7 +326,7 @@ def main():
         print("ERROR: --port is required")
         return
 
-    if not args.username:
+    if args.dev in ("host", "client") and not args.username:
         print("ERROR: --username is required")
         return
 
@@ -282,6 +345,9 @@ def main():
             return
 
         run_client(args.target, args.port, args.username.strip(), args.password)
+
+    elif args.dev == "discover":
+        run_discover(args.port)
 
 if __name__ == "__main__":
     main()
