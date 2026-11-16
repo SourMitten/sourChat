@@ -1,8 +1,8 @@
-# Python LAN Chat
+# sourChat - Python LAN Chat
 
 A simple terminal-based TCP chat application written in Python.
 
-It supports a **host/server mode** and a **client mode**, username authentication, optional password protection, timestamps, logging, and desktop notifications.
+It supports a **host/server mode** and a **client mode**, username authentication, optional password protection, timestamps, logging, desktop notifications, and automatic network discovery.
 
 ## Features
 
@@ -10,7 +10,8 @@ It supports a **host/server mode** and a **client mode**, username authenticatio
 - Multiple simultaneous clients
 - Username support
 - Optional password authentication
-- Host and client modes
+- Host, client, and discovery modes
+- **Network discovery** (automatically find available sourChat sessions on the LAN)
 - Timestamped messages
 - Join/leave system messages
 - Chat logging to `chat.log`
@@ -46,16 +47,16 @@ sudo apt install libnotify-bin
 The basic syntax is:
 
 ```bash
-python chat.py --dev <host|client> --port <PORT> --username <USERNAME> [OPTIONS]
+python chat.py --dev <host|client|discover> --port <PORT> --username <USERNAME> [OPTIONS]
 ```
 
 ## Arguments
 
 | Argument | Required | Description |
 |---|---|---|
-| `--dev` | Yes | Selects the operating mode: `host` or `client` |
+| `--dev` | Yes | Selects the operating mode: `host`, `client`, or `discover` |
 | `--port` | Yes | TCP port used by the host/client |
-| `--username` | Yes | Username displayed in chat |
+| `--username` | Host/Client | Username displayed in chat |
 | `--target` | Client only | IP address or hostname of the host |
 | `--password` | No | Optional password for connecting to the host |
 
@@ -63,7 +64,7 @@ python chat.py --dev <host|client> --port <PORT> --username <USERNAME> [OPTIONS]
 
 ## `--dev`
 
-Selects whether the program runs as a host or client.
+Selects whether the program runs as a host, client, or discovery scanner.
 
 ### Host
 
@@ -71,7 +72,7 @@ Selects whether the program runs as a host or client.
 --dev host
 ```
 
-The host creates the chat server and waits for clients to connect.
+The host creates the chat server and waits for clients to connect. It also silently listens for network discovery pings.
 
 ### Client
 
@@ -81,11 +82,20 @@ The host creates the chat server and waits for clients to connect.
 
 The client connects to an existing host.
 
+### Discover
+
+```bash
+--dev discover
+```
+
+Scans the local network for active sourChat host sessions.
+
 Only these values are accepted:
 
 ```text
 host
 client
+discover
 ```
 
 ---
@@ -180,6 +190,28 @@ If a password is configured and the client provides the wrong password, the conn
 
 ---
 
+## Network Discovery
+
+Instead of manually finding the host's IP address, you can automatically scan the local network for active sourChat sessions. 
+
+Run the application in `discover` mode using the same port the hosts are using:
+
+```bash
+python chat.py --dev discover --port 5000
+```
+
+**Example Output:**
+```text
+Searching for sourChat sessions on port 5000...
+Listening for responses (3 seconds)...
+ -> Found: Alice @ 192.168.1.100:5000
+ -> Found: Charlie @ 192.168.1.105:5000
+```
+
+*Note: Network discovery uses UDP broadcast (`255.255.255.255`). Some strict router configurations or firewall settings may block broadcast traffic. If discovery finds nothing, fall back to manually specifying the `--target` IP.*
+
+---
+
 # Quick Start
 
 ## 1. Start the Host
@@ -196,19 +228,21 @@ The host will display something similar to:
 [12:30:00] Host 'Alice' listening on port 5000
 ```
 
-## 2. Find the Host's IP Address
+## 2. Find the Host (Two Options)
 
-On Windows:
-
-```powershell
-ipconfig
+**Option A: Automatic Discovery (Recommended)**  
+Scan your local network for active hosts on the chosen port:
+```bash
+python chat.py --dev discover --port 5000
 ```
+*(Use the IP address shown in the output for Option B)*
 
-Look for the host's local IPv4 address, for example:
+**Option B: Manual IP Lookup**  
+On the host computer, find its local IPv4 address:  
+- **Windows**: Open PowerShell and run `ipconfig`  
+- **Linux/macOS**: Open terminal and run `ip a` or `ifconfig`  
 
-```text
-IPv4 Address. . . . . . . . . . . : 192.168.1.100
-```
+Look for the local IPv4 address, for example: `192.168.1.100`
 
 ## 3. Connect a Client
 
@@ -473,7 +507,7 @@ The server removes the client from the connected-client list and broadcasts a le
 
 # Architecture
 
-The application has two primary modes.
+The application has three primary modes.
 
 ## Host
 
@@ -481,14 +515,15 @@ The host:
 
 1. Creates a TCP socket.
 2. Binds to `0.0.0.0` and the selected port.
-3. Listens for incoming connections.
-4. Receives authentication information.
-5. Validates the username and optional password.
-6. Adds authenticated clients to the client list.
-7. Creates a thread for each client.
-8. Receives messages from clients.
-9. Broadcasts messages to other clients.
-10. Handles client disconnects.
+3. Starts a background UDP thread to respond to network discovery pings.
+4. Listens for incoming TCP connections.
+5. Receives authentication information.
+6. Validates the username and optional password.
+7. Adds authenticated clients to the client list.
+8. Creates a thread for each client.
+9. Receives messages from clients.
+10. Broadcasts messages to other clients.
+11. Handles client disconnects.
 
 ## Client
 
@@ -502,6 +537,16 @@ The client:
 6. Displays messages received from the host.
 7. Displays desktop notifications.
 8. Sends an exit message when `/quit` is used.
+
+## Discovery
+
+The discovery scanner:
+
+1. Creates a UDP socket.
+2. Enables broadcast permissions.
+3. Sends a JSON discovery request to the local network broadcast address (`255.255.255.255`).
+4. Listens for 3 seconds for UDP responses from active hosts.
+5. Prints the IP, port, and host username of any discovered sessions.
 
 ---
 
@@ -547,6 +592,20 @@ Example:
 python chat.py --dev client --target 192.168.1.100 --port 5000 --username Bob --password secret123
 ```
 
+### Discovery
+
+Scan the local network for active hosts:
+
+```bash
+python chat.py --dev discover --port PORT
+```
+
+Example:
+
+```bash
+python chat.py --dev discover --port 5000
+```
+
 ---
 
 # Troubleshooting
@@ -567,6 +626,16 @@ Check that:
 - Both devices can communicate over the network.
 - The host firewall allows the selected port.
 - The host is listening on the expected port.
+
+---
+
+## Discovery Finds Nothing
+
+If `--dev discover` returns no results:
+
+- Ensure the host and client are on the same local subnet.
+- Check if the host's firewall is blocking inbound UDP traffic on the specified port.
+- Some enterprise routers or strict Wi-Fi configurations block `255.255.255.255` broadcast traffic. If this is the case, use Option B (Manual IP Lookup) in the Quick Start guide.
 
 ---
 
@@ -678,6 +747,7 @@ For a more secure implementation, consider adding TLS/SSL to the socket connecti
 - The server uses a connection backlog of `10`.
 - The JSON protocol is newline-delimited.
 - The application is intended primarily for simple LAN-based communication.
+- Network discovery relies on UDP broadcasts, which may be blocked by some routers/firewalls.
 
 ---
 
